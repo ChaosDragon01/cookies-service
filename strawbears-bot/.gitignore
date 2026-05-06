@@ -1,0 +1,14 @@
+# Environment files
+.env
+*.env
+
+# Node modules
+node_modules/
+
+# Wrangler
+.wrangler/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
