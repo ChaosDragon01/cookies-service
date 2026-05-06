@@ -1,4 +1,4 @@
-name = "strawbears-worker-commands"
+name = "coookies-worker-commands"
 main = "src/index.js"
 compatibility_date = "2026-05-06"
 
