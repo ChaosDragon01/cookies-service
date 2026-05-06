@@ -19,4 +19,9 @@ coverage
 *.pid.lock
 public/upload
 .wrangler
-database/*
+
+database
+
+
+*dev.vars
+*.local

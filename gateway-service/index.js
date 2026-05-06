@@ -8,6 +8,7 @@ import {
 } from 'discord.js';
 import { createClient } from '@supabase/supabase-js';
 
+
 const { DISCORD_BOT_TOKEN, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
 
 if (!DISCORD_BOT_TOKEN || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
