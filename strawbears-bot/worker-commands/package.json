@@ -1,0 +1,17 @@
+{
+  "name": "worker-commands",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker for Discord slash commands",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "discord-interactions": "^4.4.0"
+  },
+  "devDependencies": {
+    "wrangler": "^3.114.9"
+  }
+}
