@@ -9,6 +9,7 @@ import 'dotenv/config';
 import {
   AuditLogEvent,
   Client,
+  EmbedBuilder,
   Events,
   GatewayIntentBits,
   PermissionFlagsBits
@@ -36,6 +37,9 @@ const client = new Client({
   ]
 });
 
+const guildLogChannelCache = new Map();
+const healthPort = Number(process.env.PORT || 3000);
+
 async function reportError(source, error, metadata = {}) {
   console.error(`[${source}]`, error);
   await supabase.from('error_reports').insert({
@@ -57,7 +61,83 @@ async function logActivity(eventType, userId, userTag, content, metadata = {}) {
 
   if (error) {
     await reportError('logActivity', error, { eventType, userId });
+    return;
   }
+
+  if (metadata.guild_id) {
+    await sendActivityEmbed(metadata.guild_id, eventType, userId, userTag, content, metadata);
+  }
+}
+
+async function getGuildLogChannelId(guildId) {
+  if (guildLogChannelCache.has(guildId)) {
+    return guildLogChannelCache.get(guildId);
+  }
+
+  const { data, error } = await supabase
+    .from('guild_configs')
+    .select('log_channel_id')
+    .eq('guild_id', guildId)
+    .maybeSingle();
+
+  if (error) {
+    await reportError('getGuildLogChannelId', error, { guildId });
+    return null;
+  }
+
+  const channelId = data?.log_channel_id || null;
+  guildLogChannelCache.set(guildId, channelId);
+  return channelId;
+}
+
+function buildActivityEmbed(eventType, userId, userTag, content, metadata) {
+  const isJoin = eventType === 'voice_join';
+  const isLeave = eventType === 'voice_leave';
+  const isDelete = eventType === 'message_delete';
+
+  const color = isJoin ? 0x2ecc71 : (isLeave || isDelete ? 0xe74c3c : 0x5865f2);
+  const title = isJoin
+    ? 'Voice Join'
+    : isLeave
+      ? 'Voice Leave'
+      : isDelete
+        ? 'Message Deleted'
+        : eventType;
+
+  const embed = new EmbedBuilder()
+    .setColor(color)
+    .setTitle(title)
+    .setDescription(content)
+    .setTimestamp(new Date())
+    .addFields(
+      { name: 'User', value: `${userTag} (${userId})`, inline: false },
+      { name: 'User ID', value: userId, inline: true }
+    );
+
+  if (metadata.message_id) {
+    embed.addFields({ name: 'Message ID', value: String(metadata.message_id), inline: true });
+  }
+
+  if (metadata.channel_id) {
+    embed.addFields({ name: 'Channel ID', value: String(metadata.channel_id), inline: true });
+  }
+
+  return embed;
+}
+
+async function sendActivityEmbed(guildId, eventType, userId, userTag, content, metadata) {
+  const logChannelId = await getGuildLogChannelId(guildId);
+  if (!logChannelId) {
+    return;
+  }
+
+  const channel = await client.channels.fetch(logChannelId).catch(() => null);
+  if (!channel?.isTextBased()) {
+    return;
+  }
+
+  const embed = buildActivityEmbed(eventType, userId, userTag, content, metadata);
+  await channel.send({ embeds: [embed] }).catch((error) => reportError('sendActivityEmbed', error, { guildId, logChannelId }));
 }
 
 async function fetchMessageDeleteExecutor(message) {
@@ -164,11 +244,21 @@ async function closeVoiceSession(member, oldState) {
 }
 
 async function updateHeartbeat() {
+  const activeVoiceConnections = client.guilds.cache.reduce(
+    (count, guild) => count + guild.voiceStates.cache.filter((state) => !state.member?.user?.bot && state.channelId).size,
+    0
+  );
+
   const payload = {
     service_name: 'gateway-service',
     status: 'alive',
     last_seen_at: new Date().toISOString(),
-    metadata: { pid: process.pid }
+    metadata: {
+      pid: process.pid,
+      rss: process.memoryUsage().rss,
+      ws_ping: client.ws.ping,
+      active_voice_connections: activeVoiceConnections
+    }
   };
 
   const { error } = await supabase
@@ -178,6 +268,18 @@ async function updateHeartbeat() {
   if (error) {
     await reportError('updateHeartbeat', error);
   }
+
+  await fetch(`http://localhost:${healthPort}`).catch((heartbeatError) => {
+    reportError('updateHeartbeat.selfCheck', heartbeatError);
+  });
+}
+
+function handleVoiceRecording(channelId, users) {
+  // @discordjs/voice: joinVoiceChannel with guild + adapter creator.
+  // Subscribe to user audio receivers and pipe Opus streams.
+  // Transcode or package audio chunks and write temporary files.
+  // Upload final artifacts to Supabase Storage bucket: voice_records.
+  return { channelId, usersCount: users.length };
 }
 
 client.on(Events.ClientReady, async (readyClient) => {
@@ -185,7 +287,7 @@ client.on(Events.ClientReady, async (readyClient) => {
   await updateHeartbeat();
   setInterval(() => {
     updateHeartbeat().catch((error) => reportError('heartbeat.interval', error));
-  }, 5 * 60 * 1000);
+  }, 10 * 60 * 1000);
 });
 
 client.on(Events.MessageDelete, async (message) => {
@@ -222,6 +324,7 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
     const leftChannel = oldState.channelId && !newState.channelId;
 
     if (joinedChannel && newState.channel) {
+      handleVoiceRecording(newState.channel.id, [member.user.id]);
       await createVoiceSession(member, newState.channel);
     }
 
