@@ -69,6 +69,23 @@ async function clearLogs(env) {
   }
 }
 
+async function upsertGuildConfig(env, guildId, logChannelId) {
+  const response = await fetch(`${env.SUPABASE_URL}/rest/v1/guild_configs`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      Prefer: 'resolution=merge-duplicates,return=minimal'
+    },
+    body: JSON.stringify([{ guild_id: guildId, log_channel_id: logChannelId }])
+  });
+
+  if (!response.ok) {
+    throw new Error(`Guild config upsert failed: ${response.status}`);
+  }
+}
+
 async function handleLogsView(env) {
   const logs = await supabaseSelect(
     env,
@@ -210,6 +227,42 @@ async function handleCommand(interaction, env) {
       return handleLogsClear(env);
     }
     return handleLogsView(env);
+  }
+
+  if (commandName === 'config') {
+    const sub = interaction.data?.options?.[0];
+    if (sub?.name !== 'set_log_channel') {
+      return jsonResponse({
+        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+        data: { content: 'Unknown config command.' }
+      });
+    }
+
+    const memberPermissions = interaction.member?.permissions;
+    const adminPermissionBit = (1n << 3n);
+    const hasAdmin = memberPermissions ? ((BigInt(memberPermissions) & adminPermissionBit) === adminPermissionBit) : false;
+    if (!hasAdmin) {
+      return jsonResponse({
+        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+        data: { content: 'Only administrators can run this command.', flags: 64 }
+      });
+    }
+
+    const channelOption = sub.options?.find((option) => option.name === 'channel');
+    const channelId = channelOption?.value;
+
+    if (!interaction.guild_id || !channelId) {
+      return jsonResponse({
+        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+        data: { content: 'Missing guild or channel value.', flags: 64 }
+      });
+    }
+
+    await upsertGuildConfig(env, interaction.guild_id, channelId);
+    return jsonResponse({
+      type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+      data: { content: `Log channel updated to <#${channelId}>.` }
+    });
   }
 
   return jsonResponse({
