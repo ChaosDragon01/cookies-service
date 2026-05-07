@@ -1,3 +1,10 @@
+import http from 'http';
+// Satisfies Render's requirement to bind to a port
+http.createServer((req, res) => {
+  res.writeHead(200);
+  res.end('ok');
+}).listen(process.env.PORT || 3000);
+
 import 'dotenv/config';
 import {
   AuditLogEvent,
